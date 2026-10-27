@@ -587,3 +587,20 @@ TEST_CASE("pipeline_manager reports aggregate state statistics", "[render-core][
   REQUIRE(stats.binding_rule_pending == 0);
   REQUIRE(stats.binding_rule_failed == 0);
 }
+
+TEST_CASE("pipeline_manager can attach a DRSN loader after construction", "[render-core][pipeline-manager]") {
+  fixture value;
+
+  // A null loader is the only state a unit test can exercise without a real
+  // Diligent device. It must behave exactly like the constructor's default.
+  value.manager.set_drsn_loader(nullptr);
+  REQUIRE(value.manager.request_load_drsn(uri("@pso/org/attached")).error() ==
+          make_error_code(render_core_errc::drsn_unavailable));
+
+  drsn_load_options options;
+  options.color_format = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
+  options.depth_format = Diligent::TEX_FORMAT_D32_FLOAT;
+  REQUIRE(value.manager.request_load_drsn(uri("@pso/org/attached"), "attached", options).error() ==
+          make_error_code(render_core_errc::drsn_unavailable));
+  REQUIRE(value.manager.pso_count() == 0);
+}

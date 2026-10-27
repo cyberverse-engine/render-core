@@ -87,6 +87,25 @@ struct pipeline_srb_key {
   bool operator==(const pipeline_srb_key&) const noexcept = default;
 };
 
+/**
+ * @brief Optional overrides applied while a DRSN pipeline is loaded
+ *
+ * The color and depth formats let a DRSN file stay independent of the actual
+ * swap-chain surface formats (for example RGBA8 versus BGRA8 surfaces). The
+ * optional callback runs after the format override and before the PSO is
+ * created.
+ *
+ * The callback and its user data must stay valid for the lifetime of the PSO,
+ * including request_reload().
+ *
+ */
+struct drsn_load_options {
+  Diligent::TEXTURE_FORMAT color_format = Diligent::TEX_FORMAT_UNKNOWN;
+  Diligent::TEXTURE_FORMAT depth_format = Diligent::TEX_FORMAT_UNKNOWN;
+  void (*modify_pipeline)(Diligent::PipelineStateCreateInfo&, void*) = nullptr;
+  void* modify_pipeline_user_data = nullptr;
+};
+
 struct pipeline_srb_key_hash {
   std::size_t operator()(const pipeline_srb_key& key) const noexcept {
     std::size_t seed = key.pso_uri.hash();
@@ -154,14 +173,27 @@ public:
   pipeline_manager& operator=(pipeline_manager&&) = delete;
 
   /**
+   * @brief Attach or replace the DRSN loader after device creation
+   *
+   * This exists because a Diligent DRSN loader needs the already-created
+   * IRenderDevice, while render_device::create() needs a loader. Call this
+   * before the first request_load_drsn(). The loader must outlive the manager
+   * and is only used from tick().
+   *
+   * @param loader Loader, or null to disable DRSN loading
+   */
+  void set_drsn_loader(Diligent::IRenderStateNotationLoader* loader) noexcept { drsn_loader_ = loader; }
+
+  /**
    * @brief Queue a PSO load through the DRSN loader
    *
    * @param uri PSO URI
    * @param drsn_name DRSN name; empty means uri.to_string()
+   * @param options Optional swap-chain format overrides and pipeline callback
    * @return std::expected<void, std::error_code>
    */
-  std::expected<void, std::error_code> request_load_drsn(const resource_uri& uri,
-                                                         std::string_view drsn_name = {}) noexcept;
+  std::expected<void, std::error_code>
+  request_load_drsn(const resource_uri& uri, std::string_view drsn_name = {}, drsn_load_options options = {}) noexcept;
 
   /**
    * @brief Queue a PSO creation from a pipeline description
@@ -393,6 +425,7 @@ private:
     Diligent::RefCntAutoPtr<Diligent::IPipelineState> p_pso;
     pso_from from = pso_from::manual;
     std::string drsn_name;
+    drsn_load_options drsn_options;
     pipeline_desc desc;
     pipeline_resource_state state = pipeline_resource_state::pending;
     std::string error;
@@ -428,6 +461,7 @@ private:
     resource_uri binding_uri;
     pipeline_srb_key srb_key;
     std::string drsn_name;
+    drsn_load_options drsn_options;
     pipeline_desc desc;
     binding_rule rule;
     Diligent::RefCntAutoPtr<Diligent::IPipelineState> pso;
@@ -442,8 +476,10 @@ private:
   std::expected<Diligent::RefCntAutoPtr<Diligent::IPipelineState>, std::error_code>
   build_pso_from_desc(const resource_uri& uri, const pipeline_desc& desc, std::string& error) noexcept;
 
-  Diligent::RefCntAutoPtr<Diligent::IPipelineState>
-  load_pso_from_drsn(const resource_uri& uri, std::string_view drsn_name, std::string& error) noexcept;
+  Diligent::RefCntAutoPtr<Diligent::IPipelineState> load_pso_from_drsn(const resource_uri& uri,
+                                                                       std::string_view drsn_name,
+                                                                       const drsn_load_options& options,
+                                                                       std::string& error) noexcept;
 
   bool has_static_resources(Diligent::IPipelineState* pso, std::string& error) const noexcept;
 

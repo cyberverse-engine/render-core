@@ -127,10 +127,34 @@ Skip components with:
 DRSN loading is enabled by default and requires DiligentTools/RenderStateNotation.
 Disable it with `-DCYBERVERSE_RENDER_CORE_WITH_DRSN=OFF`; `request_load_drsn()`
 then returns `drsn_unavailable` and the rest of `pipeline_manager` still builds.
-With DRSN enabled, the application still creates and parses the
-`IRenderStateNotationLoader` and passes it to `render_device::create()`; the
-device forwards it to its owned pipeline manager. The manager does not create a
-parser or a stream factory, and the loader must outlive the device.
+With DRSN enabled, the application still creates the parser and
+`IRenderStateNotationLoader`; the manager does not create either, nor a stream
+factory, and the loader must outlive the device. Because a loader needs the
+already-created `IRenderDevice`, the usual order is:
+
+1. create the device with `render_device::create(desc)` (no loader);
+2. create the parser/loader from `device->device()`;
+3. call `device->pipelines().set_drsn_loader(loader)` before the first
+   `request_load_drsn()`.
+
+`set_drsn_loader()` exists specifically to break the device/loader construction
+cycle. The older `render_device::create(desc, loader)` overload remains for
+hosts that already own a loader.
+
+When the swap-chain surface format differs from the DRSN file (for example
+BGRA8 on a MoltenVK surface), pass `drsn_load_options` to
+`request_load_drsn()`:
+
+```cpp
+render_core::drsn_load_options options;
+options.color_format = swap_chain->GetDesc().ColorBufferFormat;
+options.depth_format = swap_chain->GetDesc().DepthBufferFormat;
+pipelines.request_load_drsn(pso_uri, "my-pipeline", options);
+```
+
+The colors/depth are applied before the optional `modify_pipeline` callback and
+the PSO is created. The options are retained for `request_reload()`; callback
+user data must outlive the PSO.
 
 ## Usage sketch
 

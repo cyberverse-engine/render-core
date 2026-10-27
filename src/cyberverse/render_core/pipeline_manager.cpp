@@ -32,6 +32,23 @@ std::error_code pipeline_error(render_core_errc error) noexcept { return make_er
 
 bool is_pso_uri(const resource_uri& uri) noexcept { return uri.is_valid() && uri.type() == resource_type::pso; }
 
+void apply_drsn_options(Diligent::PipelineStateCreateInfo& create_info, void* user_data) {
+  const auto& options = *static_cast<const drsn_load_options*>(user_data);
+  if (create_info.PSODesc.PipelineType == Diligent::PIPELINE_TYPE_GRAPHICS) {
+    auto& graphics = static_cast<Diligent::GraphicsPipelineStateCreateInfo&>(create_info);
+    if (options.color_format != Diligent::TEX_FORMAT_UNKNOWN) {
+      graphics.GraphicsPipeline.NumRenderTargets = 1;
+      graphics.GraphicsPipeline.RTVFormats[0] = options.color_format;
+    }
+    if (options.depth_format != Diligent::TEX_FORMAT_UNKNOWN) {
+      graphics.GraphicsPipeline.DSVFormat = options.depth_format;
+    }
+  }
+  if (options.modify_pipeline != nullptr) {
+    options.modify_pipeline(create_info, options.modify_pipeline_user_data);
+  }
+}
+
 bool is_binding_uri(const resource_uri& uri) noexcept { return uri.is_valid() && uri.type() == resource_type::binding; }
 
 bool is_texture_or_buffer_uri(const resource_uri& uri) noexcept {
@@ -174,7 +191,8 @@ bool pipeline_manager::enqueue(task value) noexcept {
 }
 
 std::expected<void, std::error_code> pipeline_manager::request_load_drsn(const resource_uri& uri,
-                                                                         std::string_view drsn_name) noexcept {
+                                                                         std::string_view drsn_name,
+                                                                         drsn_load_options options) noexcept {
   try {
     if (!is_pso_uri(uri)) {
       return std::unexpected(pipeline_error(render_core_errc::invalid_uri));
@@ -189,6 +207,7 @@ std::expected<void, std::error_code> pipeline_manager::request_load_drsn(const r
     value.kind = task_kind::load_drsn;
     value.uri = uri;
     value.drsn_name.assign(drsn_name);
+    value.drsn_options = options;
     if (!enqueue(std::move(value))) {
       return std::unexpected(pipeline_error(render_core_errc::out_of_memory));
     }
@@ -384,11 +403,9 @@ void pipeline_manager::execute_task(task& value) {
     pso_entry entry;
     entry.from = pso_from::drsn;
     entry.drsn_name = value.drsn_name;
-    if (!value.drsn_name.empty()) {
-      entry.drsn_name = value.drsn_name;
-    }
+    entry.drsn_options = value.drsn_options;
     std::string error;
-    entry.p_pso = load_pso_from_drsn(value.uri, value.drsn_name, error);
+    entry.p_pso = load_pso_from_drsn(value.uri, value.drsn_name, value.drsn_options, error);
     if (entry.p_pso == nullptr) {
       entry.state = pipeline_resource_state::failed;
       entry.error = std::move(error);
@@ -549,7 +566,7 @@ void pipeline_manager::execute_task(task& value) {
       std::string error;
       Diligent::RefCntAutoPtr<Diligent::IPipelineState> replacement;
       if (found->second.from == pso_from::drsn) {
-        replacement = load_pso_from_drsn(value.uri, found->second.drsn_name, error);
+        replacement = load_pso_from_drsn(value.uri, found->second.drsn_name, found->second.drsn_options, error);
       } else {
         auto built = build_pso_from_desc(value.uri, found->second.desc, error);
         if (built) {
@@ -740,8 +757,10 @@ pipeline_manager::build_pso_from_desc(const resource_uri& uri, const pipeline_de
   }
 }
 
-Diligent::RefCntAutoPtr<Diligent::IPipelineState>
-pipeline_manager::load_pso_from_drsn(const resource_uri& uri, std::string_view drsn_name, std::string& error) noexcept {
+Diligent::RefCntAutoPtr<Diligent::IPipelineState> pipeline_manager::load_pso_from_drsn(const resource_uri& uri,
+                                                                                       std::string_view drsn_name,
+                                                                                       const drsn_load_options& options,
+                                                                                       std::string& error) noexcept {
 #if CYBERVERSE_RENDER_CORE_WITH_DRSN
   try {
     if (drsn_loader_ == nullptr) {
@@ -755,6 +774,8 @@ pipeline_manager::load_pso_from_drsn(const resource_uri& uri, std::string_view d
     load_info.PipelineType = Diligent::PIPELINE_TYPE_INVALID;
     load_info.AddToCache = false;
     load_info.LookupInCache = false;
+    load_info.ModifyPipeline = &apply_drsn_options;
+    load_info.pModifyPipelineData = const_cast<drsn_load_options*>(&options);
 
     Diligent::IPipelineState* raw = nullptr;
     drsn_loader_->LoadPipelineState(load_info, &raw);
@@ -772,6 +793,7 @@ pipeline_manager::load_pso_from_drsn(const resource_uri& uri, std::string_view d
 #else
   (void)uri;
   (void)drsn_name;
+  (void)options;
   error = "DRSN support is not compiled into this build";
   return {};
 #endif

@@ -150,6 +150,8 @@ public:
    * @param desc Device description
    * @param drsn_loader Optional DRSN loader used by the owned pipeline manager.
    *        It must outlive the render device. Pass null when DRSN is not used.
+   *        A loader that needs the created device can instead be attached later
+   *        with `pipelines().set_drsn_loader()`, before the first DRSN request.
    * @return std::unique_ptr<render_device>
    * @throws std::invalid_argument If desc is invalid
    * @throws std::runtime_error If Diligent cannot create the device or swap chain
